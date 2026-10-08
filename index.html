@@ -3,10 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Telegram Coin Catcher</title>
+    <title>Telegram Coin Catcher Pro</title>
     <!-- Telegram Web App SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
+        :root {
+            --accent-color: #00d2ff;
+            --gold-color: #ffd700;
+            --bg-color: #0a0e17;
+        }
+
         * {
             box-sizing: border-box;
             margin: 0;
@@ -14,147 +20,405 @@
             user-select: none;
             -webkit-user-select: none;
         }
+
         body {
-            background-color: var(--tg-theme-bg-color, #18222d);
-            color: var(--tg-theme-text-color, #ffffff);
+            background-color: var(--bg-color);
+            color: #ffffff;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             overflow: hidden;
             display: flex;
-            flex-direction: column;
             align-items: center;
             justify-content: center;
             height: 100vh;
         }
-        #gameCanvas {
-            background: var(--tg-theme-secondary-bg-color, #131415);
-            border-radius: 12px;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            max-width: 420px;
+            max-height: 750px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        canvas {
+            width: 100%;
+            height: 100%;
+            border-radius: 16px;
+            background: radial-gradient(circle at center, #141e30 0%, #0a0e17 100%);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8);
             touch-action: none;
         }
-        #ui {
+
+        /* Glassmorphism UI Overlay */
+        .overlay {
             position: absolute;
-            top: 20px;
-            font-size: 20px;
-            font-weight: bold;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: rgba(10, 14, 23, 0.85);
+            backdrop-filter: blur(8px);
+            border-radius: 16px;
+            z-index: 10;
+            transition: opacity 0.3s ease;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        h1 {
+            font-size: 28px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            background: linear-gradient(45deg, #00d2ff, #3a7bd5);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 8px;
+        }
+
+        .score-board {
+            font-size: 18px;
+            color: #a0aec0;
+            margin-bottom: 24px;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #00d2ff 0%, #0066ff 100%);
+            color: white;
+            border: none;
+            padding: 14px 36px;
+            font-size: 18px;
+            font-weight: 700;
+            border-radius: 30px;
+            cursor: pointer;
+            box-shadow: 0 4px 15px rgba(0, 210, 255, 0.4);
+            transition: transform 0.1s ease, box-shadow 0.1s ease;
+        }
+
+        .btn:active {
+            transform: scale(0.96);
+            box-shadow: 0 2px 8px rgba(0, 210, 255, 0.4);
+        }
+
+        #hud {
+            position: absolute;
+            top: 16px;
+            left: 16px;
+            right: 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            pointer-events: none;
+            z-index: 5;
+        }
+
+        .hud-card {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 8px 16px;
+            border-radius: 20px;
+            backdrop-filter: blur(4px);
+            font-weight: 700;
+            font-size: 14px;
+        }
+
+        .hud-card span {
+            color: var(--gold-color);
         }
     </style>
 </head>
 <body>
 
-    <div id="ui">Score: <span id="score">0</span></div>
-    <canvas id="gameCanvas"></canvas>
+    <div id="game-container">
+        <!-- HUD -->
+        <div id="hud">
+            <div class="hud-card">SCORE <span id="hud-score">0</span></div>
+            <div class="hud-card">BEST <span id="hud-high">0</span></div>
+        </div>
+
+        <!-- Canvas -->
+        <canvas id="gameCanvas"></canvas>
+
+        <!-- Start/Restart Menu -->
+        <div id="menu" class="overlay">
+            <h1 id="menu-title">COIN CATCHER</h1>
+            <div id="menu-score" class="score-board">Catch coins, dodge nothing!</div>
+            <button class="btn" id="start-btn" onclick="startGame()">PLAY NOW</button>
+        </div>
+    </div>
 
     <script>
-        // Initialize Telegram Web App
         const tg = window.Telegram.WebApp;
-        tg.expand(); // Expand game to full height
+        tg.expand();
 
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
-        const scoreEl = document.getElementById('score');
+        const hudScore = document.getElementById('hud-score');
+        const hudHigh = document.getElementById('hud-high');
+        const menu = document.getElementById('menu');
+        const menuTitle = document.getElementById('menu-title');
+        const menuScore = document.getElementById('menu-score');
 
-        // Set responsive canvas dimensions
-        const width = Math.min(window.innerWidth - 30, 400);
-        const height = Math.min(window.innerHeight - 100, 600);
+        // High score handling
+        let highScore = localStorage.getItem('cc_highscore') || 0;
+        hudHigh.innerText = highScore;
+
+        // Dynamic Resolution Setup
+        const width = Math.min(window.innerWidth, 420);
+        const height = Math.min(window.innerHeight, 750);
         canvas.width = width;
         canvas.height = height;
 
+        // Game State Variables
+        let isPlaying = false;
         let score = 0;
-        let gameOver = false;
+        let frameCount = 0;
+        let targetPaddleX = width / 2 - 40;
 
-        // Player configuration
-        const player = {
-            x: width / 2 - 25,
-            y: height - 40,
-            w: 50,
-            h: 15,
-            color: tg.themeParams.button_color || '#0088cc'
+        // Player Paddle Configuration
+        const paddle = {
+            x: width / 2 - 40,
+            y: height - 50,
+            w: 80,
+            h: 14,
+            r: 7,
+            color: '#00d2ff'
         };
 
-        // Falling Coins
-        const coins = [];
-        function createCoin() {
-            coins.push({
-                x: Math.random() * (width - 20) + 10,
-                y: 0,
-                radius: 10,
-                speed: 2 + Math.random() * 3,
-                color: '#ffd700'
-            });
+        // Entities & Particle Pools
+        let coins = [];
+        let particles = [];
+        let floatingTexts = [];
+
+        class Coin {
+            constructor() {
+                this.x = Math.random() * (width - 40) + 20;
+                this.y = -20;
+                this.radius = 12;
+                this.speed = 3 + Math.random() * 2 + (score / 100); // Difficulty scaling
+                this.rotation = 0;
+                this.rotSpeed = 0.05 + Math.random() * 0.05;
+            }
+
+            update() {
+                this.y += this.speed;
+                this.rotation += this.rotSpeed;
+            }
+
+            draw() {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.scale(Math.cos(this.rotation), 1); // 3D spin effect
+
+                // Outer Gold Ring
+                ctx.beginPath();
+                ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = '#ffd700';
+                ctx.shadowColor = '#ffd700';
+                ctx.shadowBlur = 10;
+                ctx.fill();
+
+                // Inner Detail
+                ctx.beginPath();
+                ctx.arc(0, 0, this.radius * 0.6, 0, Math.PI * 2);
+                ctx.strokeStyle = '#e6a100';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                ctx.restore();
+            }
         }
 
-        // Touch and Mouse Controls
-        function movePlayer(e) {
+        class Particle {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.vx = (Math.random() - 0.5) * 6;
+                this.vy = (Math.random() - 0.5) * 6;
+                this.radius = Math.random() * 3 + 1;
+                this.alpha = 1;
+                this.color = '#ffd700';
+            }
+
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.alpha -= 0.03;
+            }
+
+            draw() {
+                ctx.save();
+                ctx.globalAlpha = Math.max(0, this.alpha);
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = this.color;
+                ctx.shadowColor = this.color;
+                ctx.shadowBlur = 5;
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+
+        class FloatingText {
+            constructor(x, y, text) {
+                this.x = x;
+                this.y = y;
+                this.text = text;
+                this.alpha = 1;
+            }
+
+            update() {
+                this.y -= 1.5;
+                this.alpha -= 0.02;
+            }
+
+            draw() {
+                ctx.save();
+                ctx.globalAlpha = Math.max(0, this.alpha);
+                ctx.fillStyle = '#00d2ff';
+                ctx.font = 'bold 16px -apple-system, sans-serif';
+                ctx.fillText(this.text, this.x - 10, this.y);
+                ctx.restore();
+            }
+        }
+
+        // Touch / Drag Control with Smooth Interpolation
+        function handleMove(e) {
+            if (!isPlaying) return;
             const rect = canvas.getBoundingClientRect();
             const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-            player.x = clientX - rect.left - player.w / 2;
-
-            // Constrain within bounds
-            if (player.x < 0) player.x = 0;
-            if (player.x + player.w > width) player.x = width - player.w;
+            targetPaddleX = clientX - rect.left - paddle.w / 2;
         }
 
-        canvas.addEventListener('mousemove', movePlayer);
-        canvas.addEventListener('touchmove', movePlayer);
+        canvas.addEventListener('mousemove', handleMove);
+        canvas.addEventListener('touchmove', handleMove);
+
+        function triggerHaptic(type) {
+            if (tg.HapticFeedback) {
+                if (type === 'catch') tg.HapticFeedback.impactOccurred('light');
+                if (type === 'end') tg.HapticFeedback.notificationOccurred('error');
+            }
+        }
+
+        function createParticles(x, y) {
+            for (let i = 0; i < 10; i++) {
+                particles.push(new Particle(x, y));
+            }
+        }
+
+        function startGame() {
+            isPlaying = true;
+            score = 0;
+            coins = [];
+            particles = [];
+            floatingTexts = [];
+            hudScore.innerText = '0';
+            menu.classList.add('hidden');
+            if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
+            requestAnimationFrame(gameLoop);
+        }
+
+        function gameOver() {
+            isPlaying = false;
+            triggerHaptic('end');
+
+            if (score > highScore) {
+                highScore = score;
+                localStorage.setItem('cc_highscore', highScore);
+                hudHigh.innerText = highScore;
+            }
+
+            menuTitle.innerText = "GAME OVER";
+            menuScore.innerText = `Final Score: ${score}`;
+            document.getElementById('start-btn').innerText = "TRY AGAIN";
+            menu.classList.remove('hidden');
+        }
 
         // Main Game Loop
-        let frameCount = 0;
-        function update() {
-            if (gameOver) return;
+        function gameLoop() {
+            if (!isPlaying) return;
 
             frameCount++;
-            if (frameCount % 40 === 0) createCoin();
+            ctx.clearRect(0, 0, width, height);
 
-            // Update coins
+            // 1. Smooth Paddle Physics (Linear Interpolation)
+            paddle.x += (targetPaddleX - paddle.x) * 0.25;
+            // Constrain Paddle Bounds
+            if (paddle.x < 0) paddle.x = 0;
+            if (paddle.x + paddle.w > width) paddle.x = width - paddle.w;
+
+            // Draw Paddle with Glow
+            ctx.save();
+            ctx.beginPath();
+            ctx.roundRect(paddle.x, paddle.y, paddle.w, paddle.h, paddle.r);
+            ctx.fillStyle = paddle.color;
+            ctx.shadowColor = paddle.color;
+            ctx.shadowBlur = 15;
+            ctx.fill();
+            ctx.restore();
+
+            // 2. Spawn Coins
+            const spawnRate = Math.max(20, 45 - Math.floor(score / 50));
+            if (frameCount % spawnRate === 0) {
+                coins.push(new Coin());
+            }
+
+            // 3. Update & Render Coins
             for (let i = coins.length - 1; i >= 0; i--) {
                 const c = coins[i];
-                c.y += c.speed;
+                c.update();
+                c.draw();
 
-                // Check player collision
+                // Collision Detection with Paddle
                 if (
-                    c.y + c.radius >= player.y &&
-                    c.x >= player.x &&
-                    c.x <= player.x + player.w
+                    c.y + c.radius >= paddle.y &&
+                    c.y - c.radius <= paddle.y + paddle.h &&
+                    c.x >= paddle.x - 5 &&
+                    c.x <= paddle.x + paddle.w + 5
                 ) {
                     score += 10;
-                    scoreEl.innerText = score;
-                    if (tg.HapticFeedback) {
-                        tg.HapticFeedback.impactOccurred('light');
-                    }
+                    hudScore.innerText = score;
+                    triggerHaptic('catch');
+                    createParticles(c.x, c.y);
+                    floatingTexts.push(new FloatingText(c.x, c.y, '+10'));
                     coins.splice(i, 1);
                     continue;
                 }
 
-                // Check bottom boundary (Game Over condition)
+                // Missed Coin Game Over condition
                 if (c.y - c.radius > height) {
-                    coins.splice(i, 1);
+                    gameOver();
+                    return;
                 }
             }
 
-            draw();
-            requestAnimationFrame(update);
+            // 4. Update & Render Particles
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.update();
+                p.draw();
+                if (p.alpha <= 0) particles.splice(i, 1);
+            }
+
+            // 5. Update & Render Floating Text
+            for (let i = floatingTexts.length - 1; i >= 0; i--) {
+                const ft = floatingTexts[i];
+                ft.update();
+                ft.draw();
+                if (ft.alpha <= 0) floatingTexts.splice(i, 1);
+            }
+
+            requestAnimationFrame(gameLoop);
         }
-
-        // Render Game Objects
-        function draw() {
-            ctx.clearRect(0, 0, width, height);
-
-            // Draw player
-            ctx.fillStyle = player.color;
-            ctx.beginPath();
-            ctx.roundRect(player.x, player.y, player.w, player.h, 8);
-            ctx.fill();
-
-            // Draw coins
-            coins.forEach(c => {
-                ctx.fillStyle = c.color;
-                ctx.beginPath();
-                ctx.arc(c.x, c.y, c.radius, 0, Math.PI * 2);
-                ctx.fill();
-            });
-        }
-
-        update();
     </script>
 </body>
 </html>
